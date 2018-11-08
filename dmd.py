@@ -1,6 +1,93 @@
 import numpy as np
 from scipy import linalg as la
+from cmath import exp
 
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from matplotlib import cm
+
+class visualize:
+	'''
+	This class holds all of the functions needed for visualizing of DMD
+	results and the input data into DMD.
+	'''
+	def surface_data(F,x,t,bounds_on=False,bounds=[[0,1],[0,1],[0,1]]):
+		'''
+		This function will create a surface plot of given a set of data
+		for f(x),x,t. f(x) must be given in matrix format with evenly 
+		spaced x and t corresponding the A matrix.
+
+		inputs:
+		f - spacial-temporal data
+		x - spacial vector
+		t - time vector
+
+		outputs:
+		surf - object of the 3D plot
+
+		options:
+		bounds_on - boolean to indicate bounds wanted
+		bounds - Optional array that contains the bounds desired to put on
+				 the axes. Sample input: [[0,1],[0,1],[0,1]] for f(x),x,t.
+		'''
+		
+		# first make a meshgrid with the t and x vector. 
+		# we first define the x values as the rows and t as the columns
+		# in order to be consistent with general DMD structure. 
+		x_len = np.size(x)
+		t_len = np.size(t)
+		X, T = np.meshgrid(x, t)
+
+		# Create 3D figure
+		fig = plt.figure()
+		ax = fig.gca(projection='3d')
+
+		# Plot f(x)
+		surf = ax.plot_surface(X, T, F, linewidth=0,cmap=cm.coolwarm,antialiased=True)
+		# surf  = ax.plot_trisurf(x,t,F)
+		return surf
+
+	def surface_function(f,x,t,bounds_on=False,bounds=[[0,1],[0,1],[0,1]]):
+		'''
+		This function will create a surface plot of given a set of data
+		for f(x),x,t. 
+
+		inputs:
+		f - input function
+		x - spacial vector
+		t - time vector
+
+		outputs:
+		surf - object for the figure that is created
+
+		options:
+		bounds_on - boolean to indicate bounds wanted
+		bounds - Optional array that contains the bounds desired to put on
+				 the axes. Sample input: [[0,1],[0,1],[0,1]] for f(x),x,t.
+		'''
+
+		# first make a meshgrid with the t and x vector. 
+		# we first define the x values as the rows and t as the columns
+		# in order to be consistent with general DMD structure. 
+		x_len = np.size(x)
+		t_len = np.size(t)
+		X, T = np.meshgrid(x, t)
+		dt = t[0]-t[1]
+
+		# now evaluate the function.
+		F = np.zeros((t_len,x_len))
+		for i,x_val in enumerate(x):
+			for j,t_val in enumerate(t):
+				F[j,i] = f(x_val,t_val)
+
+		# Create 3D figure
+		fig = plt.figure()
+		ax = fig.gca(projection='3d')
+
+		# Plot f(x)
+		surf = ax.plot_surface(X, T, F, linewidth=0,cmap=cm.coolwarm,antialiased=True)
+		
+		return surf
 
 class manipulate:
 
@@ -166,7 +253,6 @@ class manipulate:
 			print('Xp =\n',Xp,'\n')
 		return X,Xp
 
-
 class dmd:
 	'''
 	This class contains the functions needed for performing a full DMD
@@ -176,7 +262,8 @@ class dmd:
 	This class also contains functions useful to the analysis of DMD
 	results and intermediates.
 	'''
-	def decomp(Xf,verbose=False,rank_cut=True,truncate=False,esp=1e-8):
+	def decomp(Xf,time,verbose=False,rank_cut=True,esp=1e-8,svd_cut=False,
+				num_svd=1):
 		'''
 		This function performs the basic DMD on a given matrix A.
 		The general outline of the algorithm is as follows...
@@ -193,18 +280,36 @@ class dmd:
 		5)  Compute the DMD modes of A by SVD reconstruction. Finally, the
 			DMD modes are given by the columns of Phi.
 			Phi = (Xp)(V)(S^-1)(W)
+		6)  Compute the discrete and continuous time eigenvalues 
+			lam (discrete) is the diagonal matrix of eigenvalues of At.
+			omg (continuous) = ln(lam)/dt
+		7) 	Compute the amplitude of each DMD mode (b). This is a vector 
+			which applies to this system: Phi(b)=X_1 Where X_1 is the first 
+			column of the input vector X. This requires a linear equation
+			solver via scipy. 
+		8)  Reconstruct the matrix X from the DMD modes (Xdmd). 
 
 		inputs:
-		X - (mxn) Matrix
+		X - (mxn) Spacial Temporal Matrix
+		time - (nx1) Time vector
 
 		outputs:
-		Phi - DMD modes
+		(1) Phi - DMD modes
+		(2) omg - discrete time eigenvalues
+		(3) lam - continuous time eigenvalues
+		(4) b - amplitudes of DMD modes
+		(5) Xdmd - reconstructed X matrix from DMD modes
+		(6) rank - the rank used in calculations
+		*** all contained in a class ***
+		*** see ### (10) ### below   ***
+
 
 		options:
 		verbose - boolean for more information
-		truncate - boolean for truncation of SVD values of X
+		svd_cut - boolean for truncation of SVD values of X
 		esp - value to truncate singular values lower than
 		rank_cut - truncate the SVD of X to the rank of X
+		num_svd - number of singular values to use
 		'''
 		if verbose:
 			print('Entering Dynamic Mode Decomposition:\n')
@@ -212,20 +317,57 @@ class dmd:
 		### (1) ####
 		# split the Xf matrix 
 		X,Xp = manipulate.split(Xf)
+		if verbose:
+			print('X = \n',X,'\n')
+			print('X` = \n',Xp,'\n')
 
 		### (2) ###
 		# perform a singular value decompostion on X
 		U,S,Vh = la.svd(X)
+		if verbose:
+			print('Singular value decomposition:')
+			print('U: \n',U)
+			print('S: \n',S)
+			print('Vh: \n',Vh)
+			print('Reconstruction:')
+			S_m = np.zeros(np.shape(X))
+			for i in range(len(list(S))):
+				S_m[i,i] = S[i]
+			recon = np.dot(np.dot(U,S_m),Vh)
+			print('X =\n',recon)
 
-		# truncate the SVD to the rank of X
-		rank = np.count_nonzero(S)
-		Ur = U[:,0:rank]
-		Sr = S[0:rank]
-		Vhr = Vh[0:rank,:]
+		# perfom desired trunctions of X
+		if svd_cut:
+			rank_cut = False
+		if rank_cut: # this is the default truncation
+			rank = 0
+			for i in S:
+				if i > esp:
+					rank += 1
+			if verbose:
+				print('Singular Values of X:','\n',S,'\n')
+				print('Reducing Rank of System...\n')
+			Ur = U[:,0:rank]
+			Sr = S[0:rank]
+			Vhr = Vh[0:rank,:]
+			if verbose:
+				recon = np.dot(np.dot(Ur,np.diag(Sr)),Vhr)
+				print('Rank Reduced reconstruction:\n','X =\n',recon)
+		elif svd_cut:
+			rank = num_svd
+			if verbose:
+				print('Singular Values of X:','\n',S,'\n')
+				print('Reducing Rank of System to n =',num_svd,'...\n')
+			Ur = U[:,0:rank]
+			Sr = S[0:rank]
+			Vhr = Vh[0:rank,:]
+			if verbose:
+				recon = np.dot(np.dot(Ur,np.diag(Sr)),Vhr)
+				print('Rank Reduced reconstruction:\n','X =\n',recon)
+
 
 		# return the condition number to view singularity
-		if verbose:
-			print('Rank of X matrix:',rank,'\n')
+		if verbose:	
 			cond = max(Sr)/min(Sr)
 			print('Condition of Rank Converted Matrix X:'\
 											,'\nK =',cond,'\n')
@@ -236,9 +378,12 @@ class dmd:
 
 		### (3) ###
 		# now compute the A_t matrix 
-		At = np.dot(Ur.transpose(),Xp)
-		At = np.dot(At,Vhr.transpose())
-		At = np.dot(At,Sr_inv)
+		Vr = Vhr.conj().T
+		At = Ur.conj().T.dot(Xp)
+		At = At.dot(Vr)
+		At = At.dot(la.inv(Sr))
+		if verbose:
+			print('A~ = \n',At,'\n')
 
 		### (4) ###
 		# perform the eigen decomposition of At
@@ -246,24 +391,306 @@ class dmd:
 
 		### (5) ### 
 		# compute the DMD modes
-		phi = np.dot(Xp,Vhr.transpose())
+		phi = np.dot(Xp,Vhr.conj().T)
 		phi = np.dot(phi,Sr_inv)
 		phi = np.dot(phi,W)
 
 		if verbose:
-			print('Normal Mode Matrix:','\nPhi =',phi)
+			print('Normal Mode Matrix:','\nPhi =',phi,'\n')
 
-		return phi
+		### (6) ### 
+		# compute the continuous and discrete eigenvalues
+		dt = time[1] - time[0]
+		lam = L
+		omg = np.log(lam)/dt
+		if verbose:
+			print('Discrete time eigenvalues:\n','Lambda =',L,'\n')
+			print('Continuous time eigenvalues:\n','Omega =',np.log(L)/dt,'\n')
+
+		### (7) ### 
+		# compute the applitude vector b by solving the linear system described
+		# note that a least squares solver has to be used in order to approximate
+		# the solution to the overdefined problem
+		x1 = X[:,0]
+		b = la.lstsq(phi,x1)
+		b = b[0]
+		if verbose:
+			print('b =\n',b,'\n')
+
+		### (8) ### 
+		# finally reconstruct the data matrix from the DMD modes
+		length = np.size(time) # number of time measurements
+		dynamics = np.zeros((rank,length),dtype=np.complex_) # initialize the time dynamics
+		for t in range(length):
+			omg_p = np.array([exp(i*time[t]) for i in omg])
+			dynamics[:,t] = b*omg_p
+			
+		if verbose:
+			print('Time dynamics:\n',dynamics,'\n')
+		Xdmd = np.dot(phi,dynamics)
+		if verbose:
+			print('Reconstruction:\n',np.real(Xdmd),'\n')
+			print('Original:\n',np.real(Xf),'\n')
+
+		### (9) ### 
+		# calculate some residual value
+		res = np.real(Xf - Xdmd)
+		error = la.norm(res)/la.norm(Xf)
+		if verbose:
+			print('Reconstruction Error:',round(error*100,2),'%')
+
+		### (10) ###
+		# returns a class with all of the results
+		class results():
+			def __init__(self):
+				self.phi = phi
+				self.omg = omg
+				self.lam = lam
+				self.b = b
+				self.Xdmd = Xdmd
+				self.error = error * 100
+				self.rank = rank
+		final = results()
+
+		return final
+
+	def predict(dmd,t):
+		'''
+		This function will take a DMD decomposition output 
+		result and a desired time incremint prediction and 
+		produce a prediction of the system at the given time.
+
+		inputs:
+		dmd - class that comes from the function "decomp"
+		t - future time for prediction
+
+		outputs:
+		x - prediction vector (real part only)
+		'''
+
+		# finally reconstruct the data matrix from the DMD modes
+		dynamics = np.zeros((dmd.rank,1),dtype=np.complex_)
+		omg_p = np.array([exp(i*t) for i in dmd.omg]) 
+		dynamics = dmd.b*omg_p
+		x = np.real(np.dot(dmd.phi,dynamics))
+
+		return x
+
+class energy:
+	'''
+	This class will hold all of the necessary function for manipulating 
+	the energy price data in this project along with the DMD results
+	'''
+	def imp_prices(name):
+		'''
+		This is a simple function that will import price data as a 
+		matrix in numpy and return the resulting matrix.
+
+		inputs:
+		name - string with name of the csv file
+
+		outputs:
+		X - numpy array with price data over time
+		'''
+		X = np.genfromtxt(name, delimiter=',')
+		X = X[1:]
+		return X
+
+	def imp_locations(name):
+		'''
+		This is a simple function that will import location data as a 
+		matrix in numpy and return the resulting matrix.
+
+		inputs:
+		name - string with name of the csv file
+
+		outputs:
+		numpy array with price data over time
+		'''
+		return np.genfromtxt(name, delimiter=',')
+
+	def plot_energy(data,indecies,start,num_vals):
+		'''
+		This function will plot the energy prices for a given vector of 
+		indicies corresponding to location in a data matrix. The number of
+		time measurements and where to start can also be specified. 
+
+		inputs:
+		data - energy price data
+		indecies - array of integers corresponding to locations
+		start - time measurement to start at
+		num_vals - number of time measurements to plot
+
+		output:
+		fig - figure containing the plot
+		'''
+		fig, ax = plt.subplots()
+		indecies = list(indecies)
+		for i in indecies:
+			ax.plot(data[i,start:start+num_vals])
+		title = 'Energy Price Visualization\n'
+		title = title + str(len(indecies)) + ' Locations Shown'
+		ax.set(xlabel='time (days)', ylabel='price ($)',\
+        		title='Energy Price Visualization')
+		return fig
+
+class map:
+	'''
+	This class will hold all necessary function for the plotting
+	of any energy stuff on a California map
+	'''
+	def plot(data,locations):
+		True
 
 if __name__ == '__main__':
-	print('DMD environment entered.\n')
+	print('DMD testing environment entered.\n')
+
+	print('\n\n ---- Function Test ---- \n\n')
+	# testing function from book
+	im = 0+1j
+	sech = lambda x: 1/np.cosh(x)
+	f = lambda x,t: sech(x + 3)*exp(2.3*im*t) + 2*sech(x)*np.tanh(x)*exp(im*2.8*t)
+	points = 3
+	x = np.linspace(-10,10,points)
+	t = np.linspace(0,4*np.pi,points)
+
+	# test decomposition of the function given above
+	F = np.zeros((np.size(x),np.size(t)),dtype=np.complex_)
+	for i,x_val in enumerate(x):
+		for j,t_val in enumerate(t):
+			F[i,j] = f(x_val,t_val)
+	results = dmd.decomp(F,t,verbose = True,num_svd=2,svd_cut=True)
 
 
-	A = np.array([[1,2,3,4],[5,6,7,8],[1,2,-3,4],[-5,-6,-7,-8]])
-	A_3 = manipulate.two_2_three(A,2,verbose = True)
-	A = manipulate.three_2_two(A_3,verbose = True)
-	X,Xp = manipulate.split(A,verbose = True)
-	dmd.decomp(A,verbose=True)
+	print('\n\n ---- Energy Test ---- \n\n')
+	data = energy.imp_prices('prices.csv')
+	locs = 4
+	point = 4
+	start = 0
+	X = data[0:locs]
+	X = X.T
+	X = X[start:start+point]
+	X = X.T
+
+	t = np.arange(point)
+	results = dmd.decomp(X,t,verbose = True,num_svd=3,svd_cut=True)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+	# decomposition of data matrix
+	# starts = np.arange(20)
+	# points = np.arange(4,20)
+	# locs = 3380
+
+	# error = []
+	# end_error = []
+	# first_error = []
+	# for point in points:
+	# 	error_hold = []
+	# 	end_error_hold = []
+	# 	first_error_hold = []
+
+	# 	for start in starts:
+	# 		X = data[0:locs]
+	# 		X = X.T
+	# 		X = X[start:start+point]
+	# 		X = X.T
+
+	# 		t = np.arange(point)
+	# 		results = dmd.decomp(X,t,verbose = False,num_svd=3,svd_cut=False)
+	# 		error_hold.append(results.error)
+
+	# 		# predcition testing on the last training point
+	# 		t_test = t[-1]
+	# 		act_vec = data[0:locs].T[t_test]
+	# 		pred_vec = dmd.predict(results,t_test)
+	# 		end_error_inst = la.norm(act_vec - pred_vec) / la.norm(act_vec)
+	# 		end_error_hold.append(end_error_inst*100)
+
+	# 		# prediction on the first time step input
+	# 		t_test += 1
+	# 		act_vec = data[0:locs].T[t_test]
+	# 		pred_vec = dmd.predict(results,t_test)
+	# 		first_error_inst = la.norm(act_vec - pred_vec) / la.norm(act_vec)
+	# 		print(point,start,first_error_inst)
+	# 		first_error_hold.append(first_error_inst*100)
+	# 	error.append(min([np.mean(error_hold),100]))
+	# 	end_error.append(min([np.mean(end_error_hold),100]))
+	# 	first_error.append(min([np.mean(first_error_hold),100]))
+
+	# plt.plot(points,error)
+	# plt.plot(points,end_error)
+	# plt.plot(points,first_error)
+	# plt.legend(['Reconstruction','Last Column','First Prediction'])
+	# plt.show()
+
+
+	# prediction testing outside training
+	# steps = np.arange(0,3)
+	# print(steps)
+	# t_new = max(t)
+	# dt = t[1] - t[0]
+	# all_error = []
+	# for step in steps:
+	# 	t_new += dt
+	# 	t = np.append(t,t_new)
+	# 	act_vec = data[start:locs].T[t_new]
+	# 	pred_vec = dmd.predict(results,t_new)
+	# 	error = la.norm(act_vec - pred_vec) / la.norm(act_vec)
+	# 	all_error = np.append(all_error,error)
+	# 	print('time:',t_new)
+	# 	print('prediction:\n',pred_vec)
+	# 	print('actual:\n',act_vec)
+	# # plt.plot(t,all_error)
+	# # plt.show()
+	# print(t)
+
+	
+
+	# plotting testing
+	# surf = visualize.surface_data(np.real(F),t,x)
+	# surf2 = visualize.surface_data(np.real(results.Xdmd),t,x)
+	# plt.show()
+
+	# predcition testing inside training
+	# num = 10
+	# t_test = t[num]
+	# act_vec = np.real(F[:,num])
+	# pred_vec = dmd.predict(results,t_test)
+	# error = la.norm(act_vec - pred_vec) / la.norm(act_vec)
+	# # print('Training Prediction Error:',error,'\n')
+
+	# # prediction testing outside training
+	# steps = np.arange(1,1e4,10)
+	# t_new = max(t)
+	# dt = t[1] - t[0]
+	# all_error = []
+	# t = []
+	# for step in steps:
+	# 	t_new += dt*step
+	# 	t.append(t_new)
+	# 	act_vec = np.real(f(x,t_new))
+	# 	pred_vec = dmd.predict(results,t_new)
+	# 	error = la.norm(act_vec - pred_vec) / la.norm(act_vec)
+	# 	all_error.append(error)
+	# # plt.plot(t,all_error)
+	# # plt.show()
+
+	
+
+
 
 
 
