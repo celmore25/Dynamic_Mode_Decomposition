@@ -258,16 +258,14 @@ class dmd:
 	This class contains the functions needed for performing a full DMD
 	on any given matrix. Depending on functions being used, different 
 	outputs can be achived.
-
 	This class also contains functions useful to the analysis of DMD
 	results and intermediates.
 	'''
-	def decomp(Xf,time,verbose=False,rank_cut=True,esp=1e-8,svd_cut=False,
+	def decomp(Xf,time,verbose=False,rank_cut=True,esp=1e-2,svd_cut=False,
 				num_svd=1):
 		'''
 		This function performs the basic DMD on a given matrix A.
 		The general outline of the algorithm is as follows...
-
 		1)  Break up the input X matrix into time series for 1 to n-1 (X)
 			and 2 to n (X) where n is the number of time intervals (X_p)
 			(columns). This uses the manipulate class's function "split".
@@ -288,11 +286,9 @@ class dmd:
 			column of the input vector X. This requires a linear equation
 			solver via scipy. 
 		8)  Reconstruct the matrix X from the DMD modes (Xdmd). 
-
 		inputs:
 		X - (mxn) Spacial Temporal Matrix
 		time - (nx1) Time vector
-
 		outputs:
 		(1) Phi - DMD modes
 		(2) omg - discrete time eigenvalues
@@ -302,8 +298,6 @@ class dmd:
 		(6) rank - the rank used in calculations
 		*** all contained in a class ***
 		*** see ### (10) ### below   ***
-
-
 		options:
 		verbose - boolean for more information
 		svd_cut - boolean for truncation of SVD values of X
@@ -367,10 +361,13 @@ class dmd:
 
 
 		# return the condition number to view singularity
+		condition = max(Sr)/min(Sr)
+		smallest_svd = min(Sr)
+		svd_used = np.size(Sr)
 		if verbose:	
-			cond = max(Sr)/min(Sr)
+			condition = max(Sr)/min(Sr)
 			print('Condition of Rank Converted Matrix X:'\
-											,'\nK =',cond,'\n')
+											,'\nK =',condition,'\n')
 
 		# make the singular values a matrix and take the inverse
 		Sr_inv = np.diag([i**-1 for i in Sr])
@@ -450,6 +447,9 @@ class dmd:
 				self.Xdmd = Xdmd
 				self.error = error * 100
 				self.rank = rank
+				self.svd_used = svd_used
+				self.condition = condition
+				self.smallest_svd = smallest_svd
 		final = results()
 
 		return final
@@ -507,7 +507,10 @@ class energy:
 		outputs:
 		numpy array with price data over time
 		'''
-		return np.genfromtxt(name, delimiter=',')
+
+		X = np.genfromtxt(name, delimiter=',')
+		X = X[1:]
+		return X
 
 	def plot_energy(data,indecies,start,num_vals):
 		'''
@@ -534,47 +537,54 @@ class energy:
         		title='Energy Price Visualization')
 		return fig
 
-class map:
-	'''
-	This class will hold all necessary function for the plotting
-	of any energy stuff on a California map
-	'''
-	def plot(data,locations):
-		True
-
 if __name__ == '__main__':
 	print('DMD testing environment entered.\n')
 
 	print('\n\n ---- Function Test ---- \n\n')
 	# testing function from book
-	im = 0+1j
-	sech = lambda x: 1/np.cosh(x)
-	f = lambda x,t: sech(x + 3)*exp(2.3*im*t) + 2*sech(x)*np.tanh(x)*exp(im*2.8*t)
-	points = 3
-	x = np.linspace(-10,10,points)
-	t = np.linspace(0,4*np.pi,points)
+	# im = 0+1j
+	# sech = lambda x: 1/np.cosh(x)
+	# f = lambda x,t: sech(x + 3)*exp(2.3*im*t) + 2*sech(x)*np.tanh(x)*exp(im*2.8*t)
+	# points = 3
+	# x = np.linspace(-10,10,points)
+	# t = np.linspace(0,4*np.pi,points)
 
-	# test decomposition of the function given above
-	F = np.zeros((np.size(x),np.size(t)),dtype=np.complex_)
-	for i,x_val in enumerate(x):
-		for j,t_val in enumerate(t):
-			F[i,j] = f(x_val,t_val)
-	results = dmd.decomp(F,t,verbose = True,num_svd=2,svd_cut=True)
+	# # test decomposition of the function given above
+	# F = np.zeros((np.size(x),np.size(t)),dtype=np.complex_)
+	# for i,x_val in enumerate(x):
+	# 	for j,t_val in enumerate(t):
+	# 		F[i,j] = f(x_val,t_val)
+	# results = dmd.decomp(F,t,verbose = True,num_svd=2,svd_cut=True)
 
 
 	print('\n\n ---- Energy Test ---- \n\n')
 	data = energy.imp_prices('prices.csv')
-	locs = 4
-	point = 4
+	locs = np.shape(data)[0]
+	point = 330
 	start = 0
 	X = data[0:locs]
 	X = X.T
 	X = X[start:start+point]
 	X = X.T
 
-	t = np.arange(point)
-	results = dmd.decomp(X,t,verbose = True,num_svd=3,svd_cut=True)
+	t = np.arange(int(np.size(data[0])))
+	error = []
+	num_svd = []
+	condition = []
+	smallest_svd = []
 
+	esp_vec = np.linspace(1,1e-2,20)
+	for i in esp_vec:
+		print('esp',i)
+		results = dmd.decomp(data,t,verbose = False,num_svd=330,svd_cut=False,esp = i)
+		error.append(results.error)
+		num_svd.append(results.svd_used)
+		condition.append(results.condition)
+		smallest_svd.append(results.smallest_svd)
+	
+	plt.plot(condition,error)
+	plt.show()
+	
 
 
 
